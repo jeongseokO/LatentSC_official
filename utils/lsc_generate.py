@@ -1,23 +1,81 @@
-"""
-Multi-GPU Safe + Flash-Attention(FA2) Compatible
-────────────────────────────────────────────
-• Works properly even with models sharded by device_map="auto"
-• Aligns all flag/mask tensors to `base_device` (GPU where input is located)
-  to prevent device conflicts during logical operations
-• Fixes RuntimeError when query length is 0 in Flash-Attention path
-  ─ Always sets attention_mask for new tokens to **True** to ensure minimum length
-• Embeddings are gathered to CPU to prevent cross-device `stack` errors
-• FIX: Prevents special_tokens index out of range
-"""
-
 import time
 from typing import List, Optional
-
 import torch
 import torch.nn.functional as F
-
-
-def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branches
+import numpy as np
+def dynamic_topk_lsc(weights, ans_list, temp=0.5):
+    """
+    Dynamic TopK LSC: Calculate from top2 to topN each,
+    find the point with the largest decrease in max_sim_score and use K right before that point
+    """
+    num_paths = len(ans_list)
+    max_k = min(num_paths - 1, num_paths)  # Set maximum K
+    
+    max_scores = []
+    best_indices = []
+    avg_weights_list = []
+    
+    # Calculate from K=2 to max_k
+    for k in range(2, max_k + 1):
+        # Select only top K weights from each row and average
+        avg_weight_topk = np.array([
+            np.mean(np.sort(row)[-k:])
+            for row in weights
+        ])
+        
+        best_idx = int(np.argmax(avg_weight_topk))
+        max_score = avg_weight_topk[best_idx]
+        
+        avg_weights_list.append(avg_weight_topk)
+        max_scores.append(max_score)
+        best_indices.append(best_idx)
+    
+    # Find point with largest decrease in max_sim_score
+    optimal_k = max_k  # Default: last K
+    largest_drop = 0.0
+    largest_drop_idx = -1
+    
+    # Calculate differences between consecutive points to find largest decrease
+    for i in range(1, len(max_scores)):
+        score_diff = max_scores[i-1] - max_scores[i]  # Decrease from previous to current point
+        if score_diff > largest_drop:
+            largest_drop = score_diff
+            largest_drop_idx = i
+    
+    # Select K right before the point with largest decrease
+    if largest_drop_idx != -1 and largest_drop > 0:
+        optimal_k = largest_drop_idx + 1  # largest_drop_idx is where decrease occurred, so optimal is right before
+    
+    # Select result corresponding to optimal_k
+    k_idx = optimal_k - 2  # Convert to 0-based index (K=2 is index 0)
+    if k_idx >= len(best_indices):
+        k_idx = len(best_indices) - 1
+    elif k_idx < 0:
+        k_idx = 0
+    
+    selected_idx = best_indices[k_idx]
+    selected_answer = ans_list[selected_idx]
+    selected_conf = ans_list.count(selected_answer) / len(ans_list)
+    selected_calib = avg_weights_list[k_idx][selected_idx]
+    
+    # Add decrease information
+    score_diffs = []
+    for i in range(1, len(max_scores)):
+        score_diffs.append(max_scores[i-1] - max_scores[i])
+    
+    return {
+        "answer": selected_answer,
+        "optimal_k": optimal_k,
+        "selected_idx": selected_idx,
+        "conf": selected_conf,
+        "calib": selected_calib,
+        "max_scores": max_scores,
+        "score_diffs": score_diffs,
+        "largest_drop": largest_drop,
+        "largest_drop_idx": largest_drop_idx,
+        "all_k_results": list(zip(range(2, max_k + 1), max_scores, best_indices))
+    }
+def generate_with_special_tokens( 
     self,
     inputs: torch.Tensor,
     special_tokens: List[int],
@@ -32,7 +90,7 @@ def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branch
     # Basic setup
     # ──────────────────────────────────────────────────────────
     self.eval()
-    base_device = inputs.device               # ex) cuda:0
+    base_device = inputs.device              
     cpu_device = torch.device("cpu")
 
     # Decoding parameters --------------------------------------------------
@@ -41,7 +99,7 @@ def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branch
     temperature    = kwargs.get("temperature", 1.0)
     top_p          = kwargs.get("top_p", 1.0)
     max_new_tokens = kwargs.get("max_new_tokens", 100)
-    max_length     = kwargs.get("max_length")              # None means ctx+new
+    max_length     = kwargs.get("max_length")             
     pad_token_id   = kwargs.get("pad_token_id",  self.config.pad_token_id)
     eos_token_id   = kwargs.get("eos_token_id",  self.config.eos_token_id)
     output_scores  = kwargs.get("output_scores",  True)
@@ -97,7 +155,7 @@ def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branch
     # ──────────────────────────────────────────────────────────
     while True:
 
-        # Exit loop if all sequences are finished (prevents Flash-Attn query=0)
+        # Exit loop if all sequences are finished
         if unfinished.max() == 0 or cur_len >= final_max_len:
             break
 
@@ -273,7 +331,7 @@ def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branch
     # ──────────────────────────────────────────────────────────
     # Post-processing (embedding aggregation)
     # ──────────────────────────────────────────────────────────
-    extra_time = time.perf_counter() - start_t
+    time = time.perf_counter() - start_t
 
     def _stack_cpu(seq_list):
         if not seq_list or hidden_dim is None:
@@ -304,7 +362,7 @@ def generate_with_special_tokens(  # noqa: C901  pylint: disable=too-many-branch
             eos_pred_embeddings=eos_pred,
             eos_first_embeddings=eos_first,
             eos_special_embeddings=eos_special,
-            extra_time=extra_time,
+            time=time,
             prob_list=prob_list,
         )
 

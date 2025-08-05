@@ -51,7 +51,7 @@ remove_eos_suffix = "remove_eos" if remove_eos else ""
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) 설정
 SEED          = 42
-DATASETS      = ["gsm8k", "math", "triviaqa", "mmlu"]
+DATASETS      = ["gsm8k", "math", "triviaqa", "mmlu", "mmlu_cot"]
 
 # Model selection
 if model_name == "llama3.1_8b":
@@ -71,10 +71,14 @@ HF_REPO_ID    = None #YOUR huggingface Repository URL ex) anonymous/LatentSC_lla
 random.seed(SEED)
 torch.manual_seed(SEED)
 
-
+family = ""
+if "llama" in model_name:
+    family = "llama"
+elif "qwen" in model_name:
+    family = "qwen"
 records = []
 for ds in DATASETS:
-    path = Path(f"filtered_{ds}.jsonl")
+    path = Path(f"dataset_generation/undersampled_{ds}_{family}.jsonl")
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             records.append(json.loads(line))

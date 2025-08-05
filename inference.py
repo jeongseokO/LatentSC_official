@@ -23,7 +23,6 @@ from collections import defaultdict, Counter
 import re 
 import string
 from jeongseokoh.LatentSC_official.utils.lsc_generate import add_enhanced_generation
-from transformers import BitsAndBytesConfig
 
 import warnings
 warnings.filterwarnings("ignore", message="Some weights of.*were not initialized from the model checkpoint")
@@ -366,7 +365,7 @@ def main():
     parser = argparse.ArgumentParser(description="10-Path + <CONCLUSION> Embedding Inference with 3 EOS Methods")
     parser.add_argument(
         "--model", required=True,
-        choices=["llama3_8b", "llama3.1_8b", "mistral_7b", "qwen3_8b", "mistral_12b", "llama3.3_70b"],
+        choices=["llama3_8b", "llama3.1_8b", "qwen3_8b", "llama3.3_70b"],
         help="Choose which model to process"
     )
     parser.add_argument(
@@ -440,7 +439,7 @@ def main():
         SPECIAL_TOKENS = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<Latent6>", "<Latent7>","<Latent8>", "<Latent9>","<CONCLUSION>"]
     SPECIAL_TOKEN = SPECIAL_TOKENS[-1]
     NUM_PATHS = args.num_path
-    MAX_NEW_TOKENS = 1024
+    MAX_NEW_TOKENS = 2048
     TEMP = 0.9
     TOP_P = 0.95
     
@@ -584,7 +583,7 @@ def main():
         "cnn_dailymail": ("abisee/cnn_dailymail", "3.0.0", "article", None, "highlights", "test")
     }
     hf_name, hf_cfg, qcol, ccol, acol, split = DATASETS[args.dataset]
-    raw = load_dataset(hf_name, hf_cfg, cache_dir="/data/jeongseokoh/data")[split]
+    raw = load_dataset(hf_name, hf_cfg)[split]
 
     # Common initialization of method_responses
     method_responses = {method: [] for method in all_methods}
@@ -600,38 +599,18 @@ def main():
         ds = raw.shuffle(seed=42).select(range(min(len(raw), args.max_samples)))
 
     # Initialize model & tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(HF_REPO, cache_dir="/data/jeongseokoh/hub/tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained(HF_REPO)
     Special_tokens_for_add = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<Latent6>", "<Latent7>", "<Latent8>", "<Latent9>", "<Latent10>", "<Latent11>", "<CONCLUSION>"]
     tokenizer.add_special_tokens({"additional_special_tokens": Special_tokens_for_add})
     tokenizer.pad_token = tokenizer.eos_token
-    is_70b = bool(re.search(r"70b", HF_REPO, re.IGNORECASE))
-    if is_70b:
-        # BitsAndBytesConfig configuration
-        bnb_cfg = BitsAndBytesConfig(
-            load_in_4bit=True,               # 4-bit quantization
-            bnb_4bit_quant_type="nf4",       # NF4 (generally most stable)
-            bnb_4bit_compute_dtype=torch.bfloat16,  # dtype for internal computation
-            llm_int8_threshold=6.0           # (optional) outlier blocking threshold
-        )
-        print("⚙ Detected 70B model → loading with 4-bit NF4 quantization.")
-        model = AutoModelForCausalLM.from_pretrained(
-            HF_REPO,
-            quantization_config=bnb_cfg,     # Apply quantization
-            device_map="auto",
-            attn_implementation="flash_attention_2",
-            cache_dir="/data/jeongseokoh/hub/model",
-            trust_remote_code=True
-        )
-    else:
-        # Keep existing method for small models like 8B
-        model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
             HF_REPO,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             attn_implementation="flash_attention_2",
-            cache_dir="/data/jeongseokoh/hub/model",
             trust_remote_code=True
         )
+        
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
     model = add_enhanced_generation(model)
@@ -747,7 +726,7 @@ def main():
             eos_first_embeddings = out_result.eos_first_embeddings
             eos_special_embeddings = out_result.eos_special_embeddings
         
-        extra_time = out_result.extra_time
+        extra_time = out_result.extra
         
         texts = []
         for i, seq in enumerate(sequences):
