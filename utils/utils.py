@@ -53,6 +53,9 @@ def extract_alphabet(text):
     Captures a single uppercase letter A–Z following '####',
     allowing optional spaces or braces.
     """
+    boxed = re.search(r"\\boxed\s*\{\s*([A-Z])\s*\}", text)
+    if boxed:
+        return boxed.group(1)
     pattern = r'#{4}\s*\{?([A-Z])\}?'
     match = re.search(pattern, text)
     if match:

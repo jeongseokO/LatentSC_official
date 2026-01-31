@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import torch
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import json
-from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, set_seed
 from datasets import load_dataset
 from tqdm.auto import tqdm
 
-from jeongseokoh.LatentSC_official.utils.prompts import get_cot_Ex, get_messages
-from jeongseokoh.LatentSC_official.utils.generate_functions import USC_generate, ask_gpt_consistency, ask_gpt_truth
-from jeongseokoh.LatentSC_official.utils.utils import (
+from utils.prompts import get_cot_Ex, get_messages, get_messages_legacy
+from utils.generate_functions import USC_generate, ask_gpt_consistency, ask_gpt_truth
+from utils.utils import (
     last_boxed_only_string_for_triviaqa, extract_boolean, normalize_answer,
     extract_number, safe_convert_to_float, last_boxed_only_string,
     majority_vote_with_conf
 )
-from jeongseokoh.LatentSC_official.utils.wucs_utils import weighted_ucs_rerank, get_text_probabilities, clean_generated_sequences
+from utils.wucs_utils import weighted_ucs_rerank, get_text_probabilities, clean_generated_sequences
 import time
 import random
 from collections import defaultdict, Counter
 import re 
 import string
-from jeongseokoh.LatentSC_official.utils.lsc_generate import add_enhanced_generation
+from utils.lsc_generate import add_enhanced_generation
 
 import warnings
 warnings.filterwarnings("ignore", message="Some weights of.*were not initialized from the model checkpoint")
@@ -135,15 +136,29 @@ def calculate_bert_score(references, hypotheses):
         return [0.0] * len(hypotheses)
 
 def extract_alphabet(text):
-    # Capture A~Z single character even if there's space or braces after ####
+    # Prefer boxed format if present, else fallback to ####
+    boxed = re.search(r"\\boxed\s*\{\s*([A-Z])\s*\}", text)
+    if boxed:
+        return boxed.group(1)
     pattern = r'#{4}\s*\{?([A-Z])\}?'
     match = re.search(pattern, text)
     if match:
         answer = match.group(1)
-        # Allow all A~Z
         if answer in string.ascii_uppercase:
             return answer
     return "No Match"
+
+def adapt_cot_ex_for_legacy(dataset, cot_ex):
+    # Legacy prompt style uses #### for some datasets
+    legacy_boxed_to_hash = {"MMLU", "truthfulqa_mcqa", "commonsense_qa", "GSM8K"}
+    if dataset not in legacy_boxed_to_hash:
+        return cot_ex
+    out = {}
+    for key, item in cot_ex.items():
+        ans = item.get("Answer", "")
+        ans = re.sub(r"\\boxed\\s*\\{([^}]*)\\}", r"#### \\1", ans)
+        out[key] = {**item, "Answer": ans}
+    return out
 
 def extract_candidate(completions, ds, gold=False):
     if gold:
@@ -166,7 +181,11 @@ def extract_candidate(completions, ds, gold=False):
             ans_list.append(a)
     elif ds == "GSM8K":
         for text in completions:
-            a = safe_convert_to_float(extract_number(text).replace(',','').rstrip('.'))
+            boxed = last_boxed_only_string(text)
+            if boxed != "No Match":
+                a = safe_convert_to_float(boxed.replace(',', '').rstrip('.'))
+            else:
+                a = safe_convert_to_float(extract_number(text).replace(',','').rstrip('.'))
             ans_list.append(a)
     elif ds == "MATH":
         for text in completions:
@@ -362,11 +381,10 @@ def calculate_eos_lsc(embeddings, ans_list, temp):
     }
 
 def main():
-    parser = argparse.ArgumentParser(description="10-Path + <CONCLUSION> Embedding Inference with 3 EOS Methods")
+    parser = argparse.ArgumentParser(description="10-Path + <Summary> Embedding Inference with 3 EOS Methods")
     parser.add_argument(
         "--model", required=True,
-        choices=["llama3_8b", "llama3.1_8b", "qwen3_8b", "llama3.3_70b"],
-        help="Choose which model to process"
+        help="Model name or Hugging Face repo id (e.g., llama3.1_8b or username/LatentSC_llama3.1_8b)"
     )
     parser.add_argument(
         "--dataset", required=True,
@@ -378,8 +396,8 @@ def main():
         help="How many examples to process (per dataset)"
     )
     parser.add_argument(
-        "--ver", type=int, default=1,
-        help="Model version"
+        "--num_special_tokens", type=int, default=6,
+        help="Number of Summary special tokens to use"
     )
     parser.add_argument(
         "--aggr", type=str, default="mean",
@@ -413,31 +431,43 @@ def main():
     parser.add_argument('--seed', type=int, default=77)
     args = parser.parse_args()
     
-    HF_MODEL_NAME = f"{args.model}"
-    is_remove_eos = args.remove_eos == "True"
+    model_arg = args.model
     enable_dynamic_topk = args.enable_dynamic_topk == "True"
     use_eos = args.use_eos == "True"
     use_eos_second = args.use_eos_second == "True"
     remove_eos = args.remove_eos == "True"
-    eos_suffix = ""
-    if remove_eos:
-        eos_suffix = "_remove_eos"
 
-    Repo_name = f"{HF_MODEL_NAME}_Multiple{args.ver}_aggr_mean{eos_suffix}"
-    
-    # Configuration
-    HF_REPO = f"jeongseokoh/{Repo_name}"
-    if args.ver == 0:
-        SPECIAL_TOKENS = ["<CONCLUSION>"]
-    elif args.ver == 1:
-        SPECIAL_TOKENS = ["<Latent1>", "<Latent2>", "<Latent3>", "<CONCLUSION>"]
-    elif args.ver == 2:
-        SPECIAL_TOKENS = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<CONCLUSION>"]
-    elif args.ver == 3:
-        SPECIAL_TOKENS = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<Latent6>", "<Latent7>","<CONCLUSION>"]
-    elif args.ver == 4:
-        SPECIAL_TOKENS = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<Latent6>", "<Latent7>","<Latent8>", "<Latent9>","<CONCLUSION>"]
-    SPECIAL_TOKEN = SPECIAL_TOKENS[-1]
+    num_special_tokens = args.num_special_tokens
+
+    # Configuration (accept full HF repo id)
+    if "/" in model_arg:
+        HF_REPO = model_arg
+        repo_base = model_arg.split("/")[-1]
+    else:
+        repo_base = f"{model_arg}_Summary{num_special_tokens}"
+        HF_REPO = f"jeongseokoh/{repo_base}"
+
+    # Prefer config values for aggregation/remove_eos/num_special_tokens if available
+    try:
+        cfg = AutoConfig.from_pretrained(HF_REPO, trust_remote_code=True)
+        if hasattr(cfg, "lsc_num_special_tokens"):
+            num_special_tokens = int(cfg.lsc_num_special_tokens)
+        if hasattr(cfg, "lsc_aggr"):
+            args.aggr = cfg.lsc_aggr
+        if hasattr(cfg, "lsc_remove_eos"):
+            remove_eos = bool(cfg.lsc_remove_eos)
+        if hasattr(cfg, "lsc_temp"):
+            args.LSC_TEMP = float(cfg.lsc_temp)
+    except Exception:
+        cfg = None
+    if "/" not in model_arg:
+        repo_base = f"{model_arg}_Summary{num_special_tokens}"
+        HF_REPO = f"jeongseokoh/{repo_base}"
+    Repo_name = repo_base
+    HF_MODEL_NAME = model_arg
+    is_remove_eos = remove_eos
+    SPECIAL_TOKENS = [f"<|Summary{i}|>" for i in range(1, num_special_tokens + 1)]
+    SPECIAL_TOKEN = SPECIAL_TOKENS[-1] if SPECIAL_TOKENS else None
     NUM_PATHS = args.num_path
     MAX_NEW_TOKENS = 2048
     TEMP = 0.9
@@ -477,7 +507,7 @@ def main():
         print(f"• EOS Methods:        {', '.join(eos_methods)}")
         print(f"• Use EOS 2nd Layer:  {use_eos_second}")
     print(f"• Remove EOS:         {remove_eos}")
-    print(f"• Version:            {args.ver}")
+    print(f"• # Summary Tokens:   {num_special_tokens}")
     print(f"• Aggregation Style:  {args.aggr}")
     print(f"• Model:              {HF_REPO}")
     print(f"• Special Tokens:     {', '.join(SPECIAL_TOKENS)}")
@@ -600,24 +630,47 @@ def main():
 
     # Initialize model & tokenizer
     tokenizer = AutoTokenizer.from_pretrained(HF_REPO)
-    Special_tokens_for_add = ["<Latent1>", "<Latent2>", "<Latent3>", "<Latent4>", "<Latent5>", "<Latent6>", "<Latent7>", "<Latent8>", "<Latent9>", "<Latent10>", "<Latent11>", "<CONCLUSION>"]
-    tokenizer.add_special_tokens({"additional_special_tokens": Special_tokens_for_add})
+    special_tokens_for_add = [f"<|Summary{i}|>" for i in range(1, num_special_tokens + 1)]
+    tokenizer.add_special_tokens({"additional_special_tokens": special_tokens_for_add})
     tokenizer.pad_token = tokenizer.eos_token
+    attn_impl = os.environ.get("ATTN_IMPL", "flash_attention_2")
+    # Ensure config vocab matches tokenizer length to avoid embedding size mismatch
+    # For backbone/base checkpoints, skip overriding vocab_size (set IS_BACKBONE=1).
+    if cfg is None:
+        cfg = AutoConfig.from_pretrained(HF_REPO, trust_remote_code=True)
+    is_backbone = os.environ.get("IS_BACKBONE", "0").lower() in ("1", "true", "yes", "y")
+    if (not is_backbone) and hasattr(cfg, "vocab_size") and cfg.vocab_size != len(tokenizer):
+        cfg.vocab_size = len(tokenizer)
     model = AutoModelForCausalLM.from_pretrained(
             HF_REPO,
+            config=cfg,
             torch_dtype=torch.bfloat16,
             device_map="auto",
-            attn_implementation="flash_attention_2",
+            attn_implementation=attn_impl,
             trust_remote_code=True
         )
         
     model.resize_token_embeddings(len(tokenizer))
     model.config.pad_token_id = tokenizer.pad_token_id
     model = add_enhanced_generation(model)
+    model.config.lsc_num_special_tokens = num_special_tokens
+    model.config.lsc_special_token_prefix = "Summary"
+    # Prefer config values when present
+    if hasattr(model.config, "lsc_aggr"):
+        args.aggr = model.config.lsc_aggr
+    else:
+        model.config.lsc_aggr = args.aggr
+    if hasattr(model.config, "lsc_remove_eos"):
+        remove_eos = bool(model.config.lsc_remove_eos)
+    else:
+        model.config.lsc_remove_eos = remove_eos
     model.eval()
 
     # Few-shot CoT examples
-    cot_ex = get_cot_Ex(args.dataset, args.model, emphasize=True)
+    prompt_style = os.environ.get("PROMPT_STYLE", "legacy").lower()
+    cot_ex = get_cot_Ex(args.dataset)
+    if prompt_style == "legacy":
+        cot_ex = adapt_cot_ex_for_legacy(args.dataset, cot_ex)
     print(f"Using CoT examples for {args.dataset}:\n{cot_ex}\n")
     total = 0
     results = []
@@ -683,14 +736,24 @@ def main():
             options = choices
         else:
             options = None
-        messages = get_messages(
-            question=question,
-            cot_ex=cot_ex,
-            model_name=args.model,
-            dataset=args.dataset,
-            emphasize=True, 
-            choices=options
-        )
+        if prompt_style == "legacy":
+            messages = get_messages_legacy(
+                question=question,
+                cot_ex=cot_ex,
+                model_name=args.model,
+                dataset=args.dataset,
+                emphasize=True,
+                choices=options
+            )
+        else:
+            messages = get_messages(
+                question=question,
+                cot_ex=cot_ex,
+                model_name=args.model,
+                dataset=args.dataset,
+                emphasize=True, 
+                choices=options
+            )
         if "qwen" in args.model:
             inputs = tokenizer.apply_chat_template(
                 messages,
@@ -726,7 +789,9 @@ def main():
             eos_first_embeddings = out_result.eos_first_embeddings
             eos_special_embeddings = out_result.eos_special_embeddings
         
-        extra_time = out_result.extra
+        extra_time = getattr(out_result, "extra", None)
+        if extra_time is None:
+            extra_time = getattr(out_result, "time", 0.0)
         
         texts = []
         for i, seq in enumerate(sequences):

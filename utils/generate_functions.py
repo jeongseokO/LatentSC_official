@@ -137,8 +137,12 @@ def USC_generate(
     usc_out = tokenizer.decode(
         outputs.sequences[0][prompt_len:], skip_special_tokens=True
     ).strip()
-    m = re.search(r"####\s*(\d+)", usc_out)
-    usc_index = int(m.group(1)) if m else 0
+    m = re.search(r"Path\s*(\d+)", usc_out, re.IGNORECASE)
+    if m:
+        usc_index = max(int(m.group(1)) - 1, 0)
+    else:
+        m = re.search(r"####\s*(\d+)", usc_out)
+        usc_index = int(m.group(1)) if m else 0
 
     torch.cuda.synchronize(device)
     peak_bytes = torch.cuda.max_memory_allocated(device)

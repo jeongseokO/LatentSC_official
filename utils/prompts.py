@@ -4,12 +4,12 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
     if dataset == "MMLU":
         question = f"{question}\n\nA: {choices[0]}\nB: {choices[1]}\nC: {choices[2]}\nD: {choices[3]}"
         messages = [
-            {"role": "system", "content": "You are a methodical problem solver, adept at solving complex multiple choice problems. Conclude your explanation with the answer in a '#### {Alphabet answer}' format, where the answer is solely an alphabet."},
+            {"role": "system", "content": "You are a methodical problem solver, adept at solving complex multiple choice problems. Conclude your explanation with the answer in a \\boxed{Letter} format"},
         ]
         for key in cot_ex:
-            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "\nFinish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "\nConclude your explanation with the answer in a \\boxed{Letter} format"})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + "\nFinish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+        messages.append({"role": "user", "content": question + "\nConclude your explanation with the answer in a \\boxed{Letter} format"})
     
     elif dataset in ["truthfulqa_mcqa", "commonsense_qa"]:
         if choices:
@@ -29,18 +29,14 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
 
         # system message
         messages = [
-            {"role": "system", "content": (
-                "You are a methodical problem solver, adept at solving complex multiple choice problems. "
-                "Conclude your explanation with the answer in a '#### {Alphabet answer}' format, "
-                "where the answer is solely an alphabet."
-            )}
+            {"role": "system", "content": "You are a methodical problem solver, adept at solving complex multiple choice problems. Conclude your explanation with the answer in a \\boxed{Letter} format"}
         ]
 
         # few-shot CoT Examples
         for key in cot_ex:
             messages.append({
                 "role": "user",
-                "content": cot_ex[key]['Question'] + "\nConclude your explanation with the answer in a '#### {Letter}'"})
+                "content": cot_ex[key]['Question'] + "\nConclude your explanation with the answer in a \\boxed{Letter} format"})
             
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
 
@@ -48,7 +44,7 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
         messages.append({
             "role": "user",
             "content": question_with_choices
-            + "\nConclude your explanation with the answer in a '#### {Letter}'"})
+            + "\nConclude your explanation with the answer in a \\boxed{Letter} format"})
         
     elif dataset == "mmlu_short":
         messages = [
@@ -80,12 +76,12 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
     elif dataset == "GSM8K":
         if format:
             messages = [
-            {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '#### {numeric answer}' format, where the answer is solely a number."},
+            {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a \\boxed{answer} format."},
             ]
             for key in cot_ex:
-                messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '#### {numeric answer}'."})
+                messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
                 messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-            messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '#### {numeric answer}'."})
+            messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '\\boxed{answer}'."})
         else:
             messages = [
             {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer"},
@@ -96,22 +92,22 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
             messages.append({"role": "user", "content": question})
     elif dataset == "MATH":
         messages = [
-        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '$\\boxed{answer}$' format."},
+        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a \\boxed{answer} format."},
         ]
         for key in cot_ex:
-            messages.append({"role": "user", "content": cot_ex[key]['Question'] + " Conclude your explanation with the answer in a '$\\boxed{answer}$' format."})
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + " Ensure your final answer is presented within the format '\\boxed{answer}'."})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + " Conclude your explanation with the answer in a '$\\boxed{answer}$' format."})
+        messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '\\boxed{answer}'."})
     
     elif dataset in ["triviaqa","nq"]:
         messages = [
-        {"role": "system", "content": "You are a methodical problem solver, adept at answering questions. Conclude your explanation with the answer in a '\\boxed{answer}' format."},
+        {"role": "system", "content": "You are a methodical problem solver, adept at answering questions. Conclude your explanation with the answer in a \\boxed{answer} format."},
         ]
         for key in cot_ex:
-            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'. Let's think step by step."})
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
         
-        messages.append({"role": "user", "content": question  + "Ensure your final answer is presented within the format '\\boxed{answer}'. Let's think step by step."})
+        messages.append({"role": "user", "content": question  + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
     
     elif dataset in ["truthfulqa"]:
         if emphasize:
@@ -152,34 +148,182 @@ def get_messages(context=None, question=None, cot_ex=None, choices=None, model_n
         
     return messages
 
+
+def get_messages_legacy(context=None, question=None, cot_ex=None, choices=None, model_name=None, dataset=None, response=None, completions=None, emphasize=False, format=True):
+    if dataset == "MMLU":
+        question = f"{question}\n\nA: {choices[0]}\nB: {choices[1]}\nC: {choices[2]}\nD: {choices[3]}"
+        messages = [
+            {"role": "system", "content": "You are a methodical problem solver, adept at solving complex multiple choice problems. Conclude your explanation with the answer in a '#### {Alphabet answer}' format, where the answer is solely an alphabet."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "\nFinish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+        messages.append({"role": "user", "content": question + "\nFinish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+
+    elif dataset in ["truthfulqa_mcqa", "commonsense_qa"]:
+        if choices:
+            labels = list(string.ascii_uppercase)
+            option_lines = "\n".join(
+                f"{labels[i]}: {opt}"
+                for i, opt in enumerate(choices)
+                if i < len(labels)
+            )
+            question_with_choices = f"{question}\n\n{option_lines}"
+        else:
+            question_with_choices = question
+
+        messages = [
+            {"role": "system", "content": (
+                "You are a methodical problem solver, adept at solving complex multiple choice problems. "
+                "Conclude your explanation with the answer in a '#### {Alphabet answer}' format, "
+                "where the answer is solely an alphabet."
+            )}
+        ]
+
+        for key in cot_ex:
+            messages.append({
+                "role": "user",
+                "content": cot_ex[key]['Question'] + "\nConclude your explanation with the answer in a '#### {Letter}'"})
+
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+
+        messages.append({
+            "role": "user",
+            "content": question_with_choices
+            + "\nConclude your explanation with the answer in a '#### {Letter}'"})
+
+    elif dataset == "mmlu_short":
+        messages = [
+            {"role": "system", "content": "You are a methodical problem solver, adept at solving complex problems. Conclude your explanation with the answer in a '#### {answer}' format"},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": "Example Problem " + key + ": " + cot_ex[key]})
+
+        messages.append({"role": "user", "content": "Solve the following problem: " + question + "\nEnsure your final answer is presented within the format '#### {answer}'."})
+
+    elif dataset == "race" and context:
+        messages = [
+        {"role": "system", "content": "You are a methodical problem solver, adept at solving complex problems. Conclude your explanation with the answer in a '#### {Alphabet answer}' format, where the answer is solely an alphabet"},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": "Example Problem " + key + ": " + cot_ex[key]})
+
+        messages.append({"role": "user", "content": context + "\nQuestion: : " + question + "\nOptions: A:"+choices[0]+", B:"+choices[1]+ ", C:"+choices[2]+", D:"+choices[3]  + "Ensure your final answer is presented within the format '#### {Alphabet answer}'."})
+
+    elif dataset == "aqua":
+        messages = [
+        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '#### {Alphabet answer}' format, where the answer is solely an alphabet"},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": "Example Problem " + key + ": " + cot_ex[key]})
+
+        messages.append({"role": "user", "content": "Solve the following mathematical problem: " + question + "\nOptions: "+choices[0]+", "+choices[1]+ ", "+choices[2]+", "+choices[3]+", "+choices[4]+" Ensure your final answer is presented within the format '#### {Alphabet answer}'."})
+
+    elif dataset == "GSM8K":
+        if format:
+            messages = [
+            {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '#### {numeric answer}' format, where the answer is solely a number."},
+            ]
+            for key in cot_ex:
+                messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '#### {numeric answer}'."})
+                messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+            messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '#### {numeric answer}'."})
+        else:
+            messages = [
+            {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer"},
+            ]
+            for key in cot_ex:
+                messages.append({"role": "user", "content": cot_ex[key]['Question']})
+                messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+            messages.append({"role": "user", "content": question})
+
+    elif dataset == "MATH":
+        messages = [
+        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '$\\boxed{answer}$' format."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + " Conclude your explanation with the answer in a '$\\boxed{answer}$' format."})
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+        messages.append({"role": "user", "content": question + " Conclude your explanation with the answer in a '$\\boxed{answer}$' format."})
+
+    elif dataset in ["triviaqa","nq"]:
+        messages = [
+        {"role": "system", "content": "You are a methodical problem solver, adept at answering questions. Conclude your explanation with the answer in a '\\boxed{answer}' format."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'. Let's think step by step."})
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+
+        messages.append({"role": "user", "content": question  + "Ensure your final answer is presented within the format '\\boxed{answer}'. Let's think step by step."})
+
+    elif dataset in ["truthfulqa"]:
+        if emphasize:
+            messages = [
+            {"role": "system", "content": (
+                "You are a methodical problem solver. Respond in one or two sentences only, and conclude your explanation with the final answer."
+            )},
+            ]
+            for key in cot_ex:
+                messages.append({"role": "user", "content": cot_ex[key]['Question'] + " Let's think step by step and conclude your explanation with the final answer."})
+                messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+            messages.append({"role": "user", "content": question + " Let's think step by step and conclude your explanation with the final answer."})
+        else:
+            messages = [
+            {"role": "system", "content": "You are a methodical problem solver. Respond concisely in one or two sentences only."},
+            ]
+            for key in cot_ex:
+                messages.append({"role": "user", "content": cot_ex[key]['Question']})
+                messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+            messages.append({"role": "user", "content": question})
+
+    elif dataset in ["cnn_dailymail"]:
+        messages = [
+        {"role": "system", "content": "You are a helpful assistant, adept at summarizing long pieces of text."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": "This is a long piece of text that you want to summarize. It contains multiple sentences and paragraphs. The goal is to generate a concise summary that captures the main points of the text. Think step by step.\nArticle: " + cot_ex[key]['Question']})
+            messages.append({"role": "assistant", "content": "Highlights: " + cot_ex[key]['Answer']})
+        messages.append({"role": "user", "content": "This is a long piece of text that you want to summarize. It contains multiple sentences and paragraphs. The goal is to generate a concise summary that captures the main points of the text. Think step by step.\nArticle: " + question})
+
+    elif dataset in ["usc"]:
+        messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        ]
+        messages.append({"role": "user", "content": "Here are multiple reasoning paths for a task. Select the most consistent and plausible path based on consensus:\n\n"})
+        for idx, path in enumerate(completions):
+            messages[-1]['content'] += f"Path {idx + 1}: {path}\n\n"
+        messages[-1]['content'] += "Select the most consistent response based on majority consensus. Provide your answer in the following format: #### {index number} (where index number is one of the responses, e.g., #### 0)."
+
+    return messages
+
 def get_cot_Ex(dataset):
     cot_ex = {}
     if dataset == "MMLU":
         cot_ex['example1'] = {
                 "Question": "What is the value of p in 24 = 2p?\n\nA: p=4\nB: p=8\nC: p=12\nD: p=24",
-                "Answer": "Step 1: To find the value of p in the equation 24 = 2p, we start by identifying the equation given. Step 2: Next, we need to isolate p by dividing both sides of the equation by 2. Step 3: This gives us 24 ÷ 2 = 2p ÷ 2, simplifying to 12 = p. Step 4: Therefore, the value of p is 12. Therefore, the answer is #### C"
+                "Answer": "Step 1: To find the value of p in the equation 24 = 2p, we start by identifying the equation given. Step 2: Next, we need to isolate p by dividing both sides of the equation by 2. Step 3: This gives us 24 ÷ 2 = 2p ÷ 2, simplifying to 12 = p. Step 4: Therefore, the value of p is 12. Therefore, the answer is \\boxed{C}"
             }
         cot_ex['example2'] = {
                 "Question": "What is the remainder of 21 divided by 7?\n\nA: 21\nB: 7\nC: 1\nD: None of these",
-                "Answer": "Step 1: To find the remainder when 21 is divided by 7, we begin by performing the division. Step 2: 21 divided by 7 equals 3, which is an integer. Step 3: Since the result is an integer, there is no remainder. Step 4: Therefore, when 21 is divided by 7, the remainder is 0. Step 5: The answer is #### D."
+                "Answer": "Step 1: To find the remainder when 21 is divided by 7, we begin by performing the division. Step 2: 21 divided by 7 equals 3, which is an integer. Step 3: Since the result is an integer, there is no remainder. Step 4: Therefore, when 21 is divided by 7, the remainder is 0. Step 5: The answer is \\boxed{D}."
             }
     if dataset in ["truthfulqa_mcqa", "commonsense_qa"]:
         cot_ex['example1'] = {
                 "Question": "What is the value of p in 24 = 2p?\n\nA: p=4\nB: p=8\nC: p=12\nD: p=24",
-                "Answer": "Step 1: To find the value of p in the equation 24 = 2p, we start by identifying the equation given. Step 2: Next, we need to isolate p by dividing both sides of the equation by 2. Step 3: This gives us 24 ÷ 2 = 2p ÷ 2, simplifying to 12 = p. Step 4: Therefore, the value of p is 12. Therefore, the answer is #### C"
+                "Answer": "Step 1: To find the value of p in the equation 24 = 2p, we start by identifying the equation given. Step 2: Next, we need to isolate p by dividing both sides of the equation by 2. Step 3: This gives us 24 ÷ 2 = 2p ÷ 2, simplifying to 12 = p. Step 4: Therefore, the value of p is 12. Therefore, the answer is \\boxed{C}"
             }
         cot_ex['example2'] = {
                 "Question": "What is the remainder of 21 divided by 7?\n\nA: 21\nB: 7\nC: 1\nD: None of these",
-                "Answer": "Step 1: To find the remainder when 21 is divided by 7, we begin by performing the division. Step 2: 21 divided by 7 equals 3, which is an integer. Step 3: Since the result is an integer, there is no remainder. Step 4: Therefore, when 21 is divided by 7, the remainder is 0. Step 5: The answer is #### D."
+                "Answer": "Step 1: To find the remainder when 21 is divided by 7, we begin by performing the division. Step 2: 21 divided by 7 equals 3, which is an integer. Step 3: Since the result is an integer, there is no remainder. Step 4: Therefore, when 21 is divided by 7, the remainder is 0. Step 5: The answer is \\boxed{D}."
             }
     elif dataset == "GSM8K":
         cot_ex['example1'] = {
             "Question": "There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?",
-            "Answer": "Step 1: We start with 15 trees. Step 2: Later we have 21 trees. Step 3: The difference must be the number of trees they planted. Step 4: So, they must have planted 21 - 15 = 6 trees. The answer is #### 6."
+            "Answer": "Step 1: We start with 15 trees. Step 2: Later we have 21 trees. Step 3: The difference must be the number of trees they planted. Step 4: So, they must have planted 21 - 15 = 6 trees. The answer is \\boxed{6}."
         }
         cot_ex['example2'] = {
             "Question": "If there are 3 cars in the parking lot and 2 more cars arrive, how many cars are in the parking lot?",
-            "Answer": "Step 1: There are 3 cars in the parking lot already. Step 2: 2 more arrive. Step 3: Now there are 3 + 2 = 5 cars. The answer is #### 5."
+            "Answer": "Step 1: There are 3 cars in the parking lot already. Step 2: 2 more arrive. Step 3: Now there are 3 + 2 = 5 cars. The answer is \\boxed{5}."
         } 
     elif dataset == "MATH":
         cot_ex['example1'] = {
@@ -243,12 +387,12 @@ def get_messages_usc(question, responses, cot=False):
     if cot == True:
         user_content += (
             "\nSelect the most consistent response based on majority consensus. "
-            "Provide your final answer in the following format: #### {index number} (where index number is one of the responses, e.g., #### 0). Let's think step by step."
+            "Which path is the most consistent? Conclude your explanation with the answer in a 'Path {number}' format. Let's think step by step."
         )
     else:
         user_content += (
             "\nSelect the most consistent response based on majority consensus. "
-            "Provide your answer in the following format: #### {index number} (where index number is one of the responses, e.g., #### 0)."
+            "Which path is the most consistent? Conclude your explanation with the answer in a 'Path {number}' format."
         )
     messages.append({"role": "user", "content": user_content})
     return messages
@@ -258,38 +402,56 @@ def get_messages_usc(question, responses, cot=False):
 def get_messages_for_data(question, cot_ex, dataset):
     if dataset == "multiple_choice_cot":
         messages = [
-            {"role": "system", "content": "Whenever you receive a question with answer choices, treat it as an open-ended problem—lay out your clear, step-by-step reasoning and a brief conclusion without ever mentioning the options, then conclude with exactly one sentence in this form:\n\nTherefore, the answer is #### {Letter}"},
+            {"role": "system", "content": "Whenever you receive a question with answer choices, treat it as a long answer form problem—lay out your clear, step-by-step reasoning and a brief conclusion without ever mentioning the options, then conclude with exactly one sentence in this form:\n\nTherefore, the answer is \\boxed{Letter}"},
         ]
         for key in cot_ex:
             messages.append({"role": "user", "content": cot_ex[key]['Question']})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + "\n\nTreat this like an open-ended problem: give me clear, step-by-step reasoning and a brief conclusion—without referring to the choice letters— then finish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+        messages.append({"role": "user", "content": question + "\n\nTreat this like an open-ended problem: give me clear, step-by-step reasoning and a brief conclusion without referring to the choice letters, then finish with exactly one sentence:\nTherefore, the answer is \\boxed{Letter}"})
     elif dataset == "multiple_choice":
         messages = [
-            {"role": "system", "content": "Whenever you receive a question with answer choices, treat it as an open-ended problem—lay out your brief conclusion without ever mentioning the options, then conclude with exactly one sentence in this form:\n\nTherefore, the answer is #### {Letter}"},
+            {"role": "system", "content": "Whenever you receive a question with answer choices, treat it as a long answer form problem—lay out your brief conclusion without ever mentioning the options, then conclude with exactly one sentence in this form:\n\nTherefore, the answer is \\boxed{Letter}"},
         ]
         for key in cot_ex:
             messages.append({"role": "user", "content": cot_ex[key]['Question']})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + "\n\nTreat this like an open-ended problem: give me a brief conclusion—without referring to the choice letters— then finish with exactly one sentence:'\n\nTherefore, the answer is #### {Letter}'"})
+        messages.append({"role": "user", "content": question + "\n\nTreat this like an open-ended problem: give me a brief conclusion without referring to the choice letters, then finish with exactly one sentence:\nTherefore, the answer is \\boxed{Letter}"})
     
     elif dataset == "gsm8k":
         messages = [
-        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '$\\boxed{answer}$' format."},
+        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a \\boxed{answer} format."},
         ]
         for key in cot_ex:
-            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '$\\boxed{answer}$'."})
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '$\\boxed{answer}$'."})
+        messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '\\boxed{answer}'."})
 
     elif dataset == "math":
         messages = [
-        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a '$\\boxed{answer}$' format."},
+        {"role": "system", "content": "You are a methodical mathematician, adept at solving complex mathematical problems. Conclude your explanation with the answer in a \\boxed{answer} format."},
         ]
         for key in cot_ex:
-            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '$\\boxed{answer}$'."})
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
             messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
-        messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '$\\boxed{answer}$'."})
+        messages.append({"role": "user", "content": question + " Ensure your final answer is presented within the format '\\boxed{answer}'."})
+    elif dataset == "triviaqa":
+        messages = [
+        {"role": "system", "content": "You are a methodical problem solver, adept at answering questions. Conclude your explanation with the answer in a \\boxed{answer} format."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": cot_ex[key]['Question'] + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+        messages.append({"role": "user", "content": question  + "Ensure your final answer is presented within the format '\\boxed{answer}'."})
+    elif dataset == "general":
+        messages = [
+        {"role": "system", "content": "You are a helpful assistant. Provide a clear and concise answer."},
+        ]
+        for key in cot_ex:
+            messages.append({"role": "user", "content": cot_ex[key]['Question']})
+            messages.append({"role": "assistant", "content": cot_ex[key]['Answer']})
+        messages.append({"role": "user", "content": question})
+    else:
+        raise ValueError(f"Unsupported dataset type for get_messages_for_data: {dataset}")
     
     return messages
 
@@ -308,7 +470,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
                 "Step 1: Identify the given equation, which is 24 = 2p.\n"
                 "Step 2: To isolate p, divide both sides by 2: 24 ÷ 2 = p.\n"
                 "Step 3: Compute 24 ÷ 2 to get p = 12. Therefore, p equals to 12.\n\n"
-                "Therefore, the answer is #### C."
+                "Therefore, the answer is \\boxed{C}."
             )
         }
         cot_ex['example2'] = {
@@ -326,7 +488,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
                 "Step 4: Identify the highest power of each prime factor appearing in either number.\n"
                 "Step 5: For 2 the highest power is 2²; for 5 it is 5.\n"
                 "Step 6: Multiply these together: 2² × 5 = 4 × 5 = 20. Therefore, the least common multiple of 4 and 10 is 20.\n\n"
-                "Therefore, the answer is #### B."
+                "Therefore, the answer is \\boxed{B}."
             )
         }
 
@@ -341,7 +503,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
             "Answer": (
                 "To estimate 711 + 497, round each number to the nearest hundred—700 and 500. "
                 "Adding those gives 1200, which lies between 1050 and 1300.\n\n"
-                "Therefore, the answer is #### D."
+                "Therefore, the answer is \\boxed{D}."
             )
         }
 
@@ -356,7 +518,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
             ),
             "Answer": (
                 "Compute 24 ÷ 2 to get p = 12. Therefore, p equals to 12.\n\n"
-                "Therefore, the answer is #### C."
+                "Therefore, the answer is \\boxed{C}."
             )
         }
         cot_ex['example2'] = {
@@ -369,7 +531,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
             ),
             "Answer": (
                 "The least common multiple of 4 and 10 is 20.\n\n"
-                "Therefore, the answer is #### B."
+                "Therefore, the answer is \\boxed{B}."
             )
         }
 
@@ -383,7 +545,7 @@ def get_cot_Ex_for_data(dataset=None, model_name=None, emphasize=False):
             ),
             "Answer": (
                 "It lies between 1050 and 1300.\n\n"
-                "Therefore, the answer is #### D."
+                "Therefore, the answer is \\boxed{D}."
             )
         }
     elif dataset == "gsm8k":

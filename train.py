@@ -3,6 +3,7 @@
 import os
 import json
 import random
+from datetime import datetime
 from pathlib import Path
 from tqdm import tqdm
 import torch
@@ -10,35 +11,33 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from accelerate import Accelerator
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from huggingface_hub import create_repo
+from huggingface_hub import create_repo, HfApi
 import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str,   default="llama3.1_8b")
-parser.add_argument('--ver', type=int,   default=2, choices=[1, 4, 6, 8, 10],
-                    help="Number of the special tokens to use")
+parser.add_argument('--num_special_tokens', type=int, default=6,
+                    help="Number of special Summary tokens to use")
 parser.add_argument('--epoch', type=int,   default=3)
 parser.add_argument('--aggr', type=str, default="last", choices=["mean", "last"],
                     help="Aggregation method for feature extraction")
 parser.add_argument('--remove_eos', type=str, default="False",
                     choices=["True","False"],
                     help="If you want to attach Special tokens without EOS, set this to True")
+parser.add_argument('--push_to_hub', type=str, default=os.environ.get("PUSH_TO_HUB", "1"),
+                    help="Push final model/tokenizer to Hugging Face Hub (1/0/True/False)")
+parser.add_argument('--hf_repo_id', type=str, default=os.environ.get("HF_REPO_ID"),
+                    help="Hugging Face repo id (e.g., username/LatentSC_llama3)")
+parser.add_argument('--output_dir', type=str, default=os.environ.get("OUTPUT_DIR"),
+                    help="Local output directory for saving the final model/tokenizer")
 
 args = parser.parse_args()
 
 # Boolean 설정
 remove_eos = args.remove_eos == "True"
+push_to_hub = str(args.push_to_hub).lower() in ["1", "true", "yes", "y"]
 # Special tokens 정의
-if args.ver == 1:
-    special_tokens_only = ["<|Support1|>"]
-elif args.ver == 4:
-    special_tokens_only = ["<|Support1|>", "<|Support2|>", "<|Support3|>", "<|Support4|>"]
-elif args.ver == 6:
-    special_tokens_only = ["<|Support1|>", "<|Support2|>", "<|Support3|>", "<|Support4|>", "<|Support5|>", "<|Support6|>"]
-elif args.ver == 8:
-    special_tokens_only = ["<|Support1|>", "<|Support2|>", "<|Support3|>", "<|Support4|>", "<|Support5|>", "<|Support6|>", "<|Support7|>", "<|Support8|>"]
-elif args.ver == 10:
-    special_tokens_only = ["<|Support1|>", "<|Support2|>", "<|Support3|>", "<|Support4|>", "<|Support5|>", "<|Support6|>", "<|Support7|>", "<|Support8|>"]
+special_tokens_only = [f"<|Summary{i}|>" for i in range(1, args.num_special_tokens + 1)]
 
 # Model name 설정
 model_name = args.model
@@ -46,8 +45,7 @@ model_name = args.model
 # SPECIAL_TOKEN 구성
 SPECIAL_TOKEN = ''.join(special_tokens_only)
 
-# Repository naming
-remove_eos_suffix = "remove_eos" if remove_eos else ""
+# Repository naming (config handles aggregation/remove_eos)
 # ─────────────────────────────────────────────────────────────────────────────
 # 0) 설정
 SEED          = 42
@@ -67,6 +65,8 @@ TEMPERATURE   = 0.07
 NUM_EPOCHS    = args.epoch
 SPLIT_RATIOS  = (0.9, 0.1)
 HF_REPO_ID    = None #YOUR huggingface Repository URL ex) anonymous/LatentSC_llama3
+# Allow CLI/env override for repo id
+HF_REPO_ID    = args.hf_repo_id or HF_REPO_ID
 # reproducibility
 random.seed(SEED)
 torch.manual_seed(SEED)
@@ -172,6 +172,11 @@ print(f"모델 로드 완료: {MODEL_NAME}")
 
 model.config.pad_token_id = tokenizer.pad_token_id
 print(f"모델 pad_token_id 설정 완료: {model.config.pad_token_id}")
+model.config.lsc_num_special_tokens = args.num_special_tokens
+model.config.lsc_special_token_prefix = "Summary"
+model.config.lsc_aggr = args.aggr
+model.config.lsc_remove_eos = remove_eos
+model.config.lsc_temp = TEMPERATURE
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -295,7 +300,8 @@ model, optimizer, train_loader, val_loader = accelerator.prepare(
 inp_embed.weight.register_hook(_mask_grad)
 
 print(f"gradient hook 설정 완료: {special_ids} → 1.0")
-print(f"Feature aggregation method: {args.aggr}")
+aggr_method = model.config.lsc_aggr
+print(f"Feature aggregation method: {aggr_method}")
 
 
 for epoch in range(1, NUM_EPOCHS+1):
@@ -313,7 +319,7 @@ for epoch in range(1, NUM_EPOCHS+1):
         hs = base_outputs.last_hidden_state
         
         # Feature extraction using specified aggregation method
-        feats = extract_features(hs, inputs["input_ids"], inputs["attention_mask"], args.aggr)
+        feats = extract_features(hs, inputs["input_ids"], inputs["attention_mask"], aggr_method)
 
         loss = supervised_contrastive_loss(feats, labels, TEMPERATURE)
         optimizer.zero_grad()
@@ -337,7 +343,7 @@ for epoch in range(1, NUM_EPOCHS+1):
             hs = base_outputs.last_hidden_state
             
             # Feature extraction using specified aggregation method
-            feats = extract_features(hs, inputs["input_ids"], inputs["attention_mask"], args.aggr)
+            feats = extract_features(hs, inputs["input_ids"], inputs["attention_mask"], aggr_method)
             
             val_loss_item = supervised_contrastive_loss(feats, labels, TEMPERATURE).item()
             val_loss += val_loss_item
@@ -345,3 +351,36 @@ for epoch in range(1, NUM_EPOCHS+1):
 
 
     print(f"[Epoch {epoch}] Avg train_loss={avg_train:.4f}  Avg val_loss={avg_val:.4f}")
+
+# Save and (optionally) push to HF Hub
+model_tag = model_name.replace("/", "_")
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_dir = args.output_dir or f"outputs/{model_tag}_{args.aggr}_e{NUM_EPOCHS}_{run_id}"
+
+accelerator.wait_for_everyone()
+unwrapped = accelerator.unwrap_model(model)
+
+if accelerator.is_main_process:
+    os.makedirs(output_dir, exist_ok=True)
+    unwrapped.save_pretrained(output_dir, save_function=accelerator.save)
+    tokenizer.save_pretrained(output_dir)
+    print(f"Saved final model/tokenizer to {output_dir}")
+
+    if push_to_hub:
+        token = os.environ.get("HUGGINGFACE_HUB_TOKEN") or os.environ.get("HF_TOKEN")
+        if not token:
+            print("[warn] PUSH_TO_HUB is enabled but no HF token found. Set HUGGINGFACE_HUB_TOKEN or HF_TOKEN.")
+        else:
+            if not HF_REPO_ID:
+                api = HfApi()
+                who = api.whoami(token=token)
+                username = who.get("name") or who.get("fullname") or "unknown-user"
+                repo_name = f"LatentSC_{model_tag}"
+                HF_REPO_ID = f"{username}/{repo_name}"
+                print(f"[info] HF_REPO_ID not set. Using inferred repo: {HF_REPO_ID}")
+            create_repo(HF_REPO_ID, exist_ok=True, token=token)
+            unwrapped.push_to_hub(HF_REPO_ID, token=token)
+            tokenizer.push_to_hub(HF_REPO_ID, token=token)
+            print(f"Pushed model/tokenizer to HF Hub: {HF_REPO_ID}")
+
+accelerator.wait_for_everyone()

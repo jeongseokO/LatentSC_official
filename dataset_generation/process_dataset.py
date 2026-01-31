@@ -15,7 +15,7 @@ def parse_args():
     )
     p.add_argument(
         "--dataset", required=True,
-        choices=["gsm8k", "math", "triviaqa", "mmlu"],
+        choices=["gsm8k", "math", "triviaqa", "mmlu", "mmlu_cot"],
         help="Dataset type"
     )
     p.add_argument(
@@ -203,7 +203,7 @@ def main():
             rec2 = unbox_assistant(rec, remove_dollar=False)
             processed.append(rec2)
 
-    else:  # mmlu
+    else:  # mmlu / mmlu_cot
         for rec in raw:
             rec2 = to_open_ended(rec)
             if rec2 is not None:  # Process only non-None cases
@@ -225,16 +225,24 @@ def main():
     # Set system prompt
     if args.dataset in ("gsm8k", "math"):
         system_prompt = "You are a methodical mathematician, adept at solving complex mathematical problems. "
-    elif args.dataset == "mmlu":
+    elif args.dataset in ("mmlu", "mmlu_cot"):
         system_prompt = "You are a methodical problem solver, adept at solving complex problems."
     else:  # triviaqa
         system_prompt = "You are a methodical problem solver, adept at solving complex problems. "
 
     # Save as JSONL
+    # Distinguish mmlu vs mmlu_cot in question_id prefix
+    if args.dataset == "mmlu_cot":
+        qid_prefix = "mmlu_step_"
+    elif args.dataset == "mmlu":
+        qid_prefix = "mmlu_"
+    else:
+        qid_prefix = f"{args.dataset}_step_"
+
     with output_path.open("w", encoding="utf-8") as f:
         for rec in processed:
             out = {
-                "question_id":   f"{args.dataset}_step_{rec['question_id']}",
+                "question_id":   f"{qid_prefix}{rec['question_id']}",
                 "response_id":   f"{rec['response_id']}",
                 "system":        system_prompt,
                 "user":          rec["user"],

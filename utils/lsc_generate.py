@@ -331,7 +331,7 @@ def generate_with_special_tokens(
     # ──────────────────────────────────────────────────────────
     # Post-processing (embedding aggregation)
     # ──────────────────────────────────────────────────────────
-    time = time.perf_counter() - start_t
+    elapsed_time = time.perf_counter() - start_t
 
     def _stack_cpu(seq_list):
         if not seq_list or hidden_dim is None:
@@ -362,7 +362,7 @@ def generate_with_special_tokens(
             eos_pred_embeddings=eos_pred,
             eos_first_embeddings=eos_first,
             eos_special_embeddings=eos_special,
-            time=time,
+            time=elapsed_time,
             prob_list=prob_list,
         )
 

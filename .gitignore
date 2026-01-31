@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.python-version
+.ipynb_checkpoints/
+
+# Virtual env
+.venv/
+venv/
+
+# Logs / outputs
+logs/
+outputs/
+*.out
+*.err
+
+# HF cache
+.hf_home/
+
+# Data artifacts (generated)
+dataset_generation/*.jsonl
+dataset_generation/raw_data_*
+dataset_generation/proc_data_*
+dataset_generation/undersampled_*
+dataset_generation/mixed_data.jsonl
+dataset_generation/raw_data_*_meta-llama/
+
+# OS
+.DS_Store

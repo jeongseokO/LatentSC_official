@@ -1,0 +1,20 @@
+# pip install -r requirements.txt
+torch
+transformers
+datasets
+numpy
+pandas
+tqdm
+vllm
+
+# HF ecosystem
+accelerate
+huggingface_hub
+
+# API
+openai
+
+# Evaluation
+rouge-score
+bert-score
+

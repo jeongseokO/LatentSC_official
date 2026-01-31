@@ -1,9 +1,16 @@
 import os
+import sys
+from pathlib import Path
 import argparse
 import json
 import random
 import time
 from tqdm import tqdm
+
+# Ensure repo root is on sys.path for absolute imports (e.g., utils.*)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed
@@ -23,6 +30,12 @@ parser.add_argument('--max_tokens',     type=int,   default=1024)
 parser.add_argument('--precision',      type=str,   default="bf16", choices=["fp32","fp16","bf16"])
 parser.add_argument('--seed',           type=int,   default=99)
 parser.add_argument('--batch_size',     type=int,   default=1500)  # Add batch save size
+parser.add_argument('--gen_batch_size', type=int,   default=1)
+parser.add_argument('--backend',        type=str,   default="transformers", choices=["transformers", "vllm"])
+parser.add_argument('--vllm_tensor_parallel_size', type=int, default=1)
+parser.add_argument('--vllm_gpu_memory_utilization', type=float, default=0.9)
+parser.add_argument('--vllm_max_model_len', type=int, default=None)
+parser.add_argument('--vllm_trust_remote_code', action="store_true")
 args = parser.parse_args()
 
 # ----------------------------------------
@@ -34,19 +47,48 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # ----------------------------------------
 # 3) Load model & tokenizer
 # ----------------------------------------
-tokenizer = AutoTokenizer.from_pretrained(args.model)
+tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=args.vllm_trust_remote_code)
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "left"
 
-dtype = {"fp32":torch.float32, "fp16":torch.float16, "bf16":torch.bfloat16}[args.precision]
-model = AutoModelForCausalLM.from_pretrained(
-    args.model,
-    torch_dtype=dtype,
-    device_map="auto",
-    attn_implementation="flash_attention_2",
-).to(device)
-model.eval()
-print(model)
+model = None
+llm = None
+if args.backend == "transformers":
+    dtype = {"fp32":torch.float32, "fp16":torch.float16, "bf16":torch.bfloat16}[args.precision]
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=dtype,
+        device_map="auto",
+        attn_implementation="flash_attention_2",
+        trust_remote_code=args.vllm_trust_remote_code,
+    ).to(device)
+    model.eval()
+    print(model)
+else:
+    if not torch.cuda.is_available():
+        raise RuntimeError("vLLM backend requires CUDA. Please run on a GPU machine.")
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
+    try:
+        import multiprocessing as mp
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
+    try:
+        from vllm import LLM, SamplingParams
+    except Exception as e:
+        raise ImportError("vLLM is not installed. Install with `pip install vllm`.") from e
+    vllm_dtype = {"fp32":"float32", "fp16":"float16", "bf16":"bfloat16"}[args.precision]
+    vllm_kwargs = {
+        "model": args.model,
+        "dtype": vllm_dtype,
+        "tensor_parallel_size": args.vllm_tensor_parallel_size,
+        "gpu_memory_utilization": args.vllm_gpu_memory_utilization,
+        "trust_remote_code": args.vllm_trust_remote_code,
+    }
+    if args.vllm_max_model_len is not None:
+        vllm_kwargs["max_model_len"] = args.vllm_max_model_len
+    llm = LLM(**vllm_kwargs)
 # ----------------------------------------
 # 4) Dataset preparation function (reusing existing code)
 # ----------------------------------------
@@ -143,28 +185,98 @@ elif task_type == "triviaqa":
 # ----------------------------------------
 @torch.inference_mode()
 def generate_responses(messages, num_return, temperature, max_new_tokens):
-    inp = tokenizer.apply_chat_template(
+    if args.backend == "transformers":
+        inp = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            enable_thinking=False
+        ).to(device)
+        
+        out = model.generate(
+            inp,
+            max_new_tokens=max_new_tokens,
+            num_return_sequences=num_return,
+            do_sample=True,
+            temperature=temperature,
+            top_p=1,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        # Decode only after prompt length
+        prompt_len = inp.shape[-1]
+        texts = [ tokenizer.decode(seq[prompt_len:], skip_special_tokens=True)
+                  for seq in out ]
+        
+        return texts
+
+    prompt_text = tokenizer.apply_chat_template(
         messages,
         add_generation_prompt=True,
-        return_tensors="pt",
+        tokenize=False,
         enable_thinking=False
-    ).to(device)
-    
-    out = model.generate(
-        inp,
-        max_new_tokens=max_new_tokens,
-        num_return_sequences=num_return,
-        do_sample=True,
-        temperature=temperature,
-        top_p=1,
-        pad_token_id=tokenizer.eos_token_id
     )
-    # Decode only after prompt length
-    prompt_len = inp.shape[-1]
-    texts = [ tokenizer.decode(seq[prompt_len:], skip_special_tokens=True)
-              for seq in out ]
-    
-    return texts
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=1.0,
+        max_tokens=max_new_tokens,
+        n=num_return,
+        seed=args.seed,
+    )
+    outputs = llm.generate([prompt_text], sampling_params)
+    return [o.text for o in outputs[0].outputs]
+
+@torch.inference_mode()
+def generate_responses_batch(messages_list, num_return, temperature, max_new_tokens):
+    if args.backend == "transformers":
+        prompt_texts = [
+            tokenizer.apply_chat_template(
+                msgs,
+                add_generation_prompt=True,
+                tokenize=False,
+                enable_thinking=False
+            )
+            for msgs in messages_list
+        ]
+        inputs = tokenizer(prompt_texts, return_tensors="pt", padding=True).to(device)
+        prompt_lens = inputs["attention_mask"].sum(dim=1).tolist()
+
+        out = model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            max_new_tokens=max_new_tokens,
+            num_return_sequences=num_return,
+            do_sample=True,
+            temperature=temperature,
+            top_p=1,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+        responses_by_q = [[] for _ in range(len(messages_list))]
+        for idx, seq in enumerate(out):
+            src_idx = idx // num_return
+            pl = prompt_lens[src_idx]
+            text = tokenizer.decode(seq[pl:], skip_special_tokens=True)
+            responses_by_q[src_idx].append(text)
+        return responses_by_q
+
+    prompt_texts = [
+        tokenizer.apply_chat_template(
+            msgs,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False
+        )
+        for msgs in messages_list
+    ]
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=1.0,
+        max_tokens=max_new_tokens,
+        n=num_return,
+        seed=args.seed,
+    )
+    outputs = llm.generate(prompt_texts, sampling_params)
+    return [[o.text for o in out.outputs] for out in outputs]
 
 # ----------------------------------------
 # 7) Answer extraction utility
@@ -220,50 +332,56 @@ if os.path.exists(jsonl_path):
 print(f"Starting processing of {len(questions)} questions (batch size: {args.batch_size})")
 print(f"Save file: {jsonl_path}")
 
-for q_idx, question in enumerate(tqdm(questions, desc="Processing questions")):
-    msgs = get_messages_for_data(question, cot_ex, task_type)
-    responses = generate_responses(
-        msgs,
+gen_bs = max(1, int(args.gen_batch_size))
+for batch_start in tqdm(range(0, len(questions), gen_bs), desc="Processing questions"):
+    batch_questions = questions[batch_start:batch_start + gen_bs]
+    msgs_list = [get_messages_for_data(q, cot_ex, task_type) for q in batch_questions]
+    responses_list = generate_responses_batch(
+        msgs_list,
         num_return=args.num_responses,
         temperature=args.temperature,
         max_new_tokens=args.max_tokens
     )
-    
-    print(f"Question {q_idx}: {question}\n")
-    print(f"Response: {responses[0]}\n")
-    
-    for resp in responses:
-        ans = extract_answer(resp, task_type)
-        # Skip and don't save if "No Match"
-        if ans == "No Match":
-            continue
-        clean_ans = ans.replace("\\", "")
-        
-        record = {
-            "question_id": q_idx,
-            "system":      system_prompt,
-            "user":        question,
-            "assistant":   resp,
-            "answer":      clean_ans,
-            "task":        task_type
-        }
-        
-        current_batch.append(record)
-        all_records.append(record)
-        all_answers.add(clean_ans)
-        
-        # Save when batch size is reached
-        if len(current_batch) >= args.batch_size:
-            # Generate response_id mapping (based on all answers so far)
-            unique_answers = sorted(all_answers)
-            response2id = {ans: i for i, ans in enumerate(unique_answers)}
-            
-            # Append batch to file
-            append_batch_to_jsonl(current_batch, jsonl_path, response2id, batch_num)
-            
-            # Reset batch
-            current_batch = []
-            batch_num += 1
+
+    for i, question in enumerate(batch_questions):
+        q_idx = batch_start + i
+        responses = responses_list[i]
+        if responses:
+            print(f"Question {q_idx}: {question}\n")
+            print(f"Response: {responses[0]}\n")
+
+        for resp in responses:
+            ans = extract_answer(resp, task_type)
+            # Skip and don't save if "No Match"
+            if ans == "No Match":
+                continue
+            clean_ans = ans.replace("\\", "")
+
+            record = {
+                "question_id": q_idx,
+                "system":      system_prompt,
+                "user":        question,
+                "assistant":   resp,
+                "answer":      clean_ans,
+                "task":        task_type
+            }
+
+            current_batch.append(record)
+            all_records.append(record)
+            all_answers.add(clean_ans)
+
+            # Save when batch size is reached
+            if len(current_batch) >= args.batch_size:
+                # Generate response_id mapping (based on all answers so far)
+                unique_answers = sorted(all_answers)
+                response2id = {ans: i for i, ans in enumerate(unique_answers)}
+
+                # Append batch to file
+                append_batch_to_jsonl(current_batch, jsonl_path, response2id, batch_num)
+
+                # Reset batch
+                current_batch = []
+                batch_num += 1
 
 # ───────────────────────────────────────────────────────────────
 # 10) Save last batch (if there's remaining data)
